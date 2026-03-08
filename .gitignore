@@ -1,0 +1,18 @@
+# Build
+target/
+
+# macOS
+.DS_Store
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Merge artifacts
+*.orig
+
+# Environment
+.env
