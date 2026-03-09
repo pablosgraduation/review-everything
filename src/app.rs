@@ -353,7 +353,7 @@ impl App {
     fn handle_action(&mut self, action: Action) -> std::io::Result<bool> {
         match &self.view {
             View::Log => return Ok(self.handle_log_action(action)),
-            View::Diff => self.handle_diff_action(action),
+            View::Diff => return Ok(self.handle_diff_action(action)),
             View::Compare(_) => return Ok(self.handle_compare_action(action)),
             _ => {}
         }
@@ -443,7 +443,7 @@ impl App {
         }
     }
 
-    fn handle_diff_action(&mut self, action: Action) {
+    fn handle_diff_action(&mut self, action: Action) -> bool {
         let viewport_height = 30; // approximate
 
         match action {
@@ -451,7 +451,7 @@ impl App {
                 self.reviewed.clear();
                 self.diff_scope = None;
                 if self.launched_with_args {
-                    std::process::exit(0);
+                    return true;
                 }
                 self.view = View::Log;
             }
@@ -648,6 +648,7 @@ impl App {
             }
             _ => {}
         }
+        false
     }
 
     fn ensure_diff_cursor_visible(&mut self, viewport_height: usize) {
