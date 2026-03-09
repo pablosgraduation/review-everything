@@ -142,7 +142,9 @@ fn db_path(git_root: &Path) -> Option<std::path::PathBuf> {
 }
 
 fn dirs_db() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME").ok()?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
     Some(Path::new(&home).join(".config/re/reviews"))
 }
 
