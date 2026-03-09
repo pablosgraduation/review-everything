@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, LogItem};
 use crate::git::LogEntry;
 use crate::ui::highlights;
 
@@ -26,7 +26,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.log_entries.is_empty() {
+    if app.log_items.is_empty() {
         let msg = Paragraph::new("No commits found")
             .style(Style::default().fg(Color::Rgb(120, 120, 120)))
             .alignment(ratatui::layout::Alignment::Center);
@@ -66,10 +66,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let visible_height = list_area.height as usize;
 
-    // Determine which entries to show
+    // Determine which items to show
     let (display_indices, scroll, selected_idx) = if app.search_active {
         let indices: Vec<usize> = if app.search_query.is_empty() {
-            (0..app.log_entries.len()).collect()
+            (0..app.log_items.len()).collect()
         } else {
             app.search_filtered.clone()
         };
@@ -77,8 +77,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         let sel = app.search_cursor;
         (indices, sc, sel)
     } else {
-        let indices: Vec<usize> = (0..app.log_entries.len()).collect();
-        (indices, app.log_scroll, app.log_cursor) // log_cursor is an index into the full list
+        let indices: Vec<usize> = (0..app.log_items.len()).collect();
+        (indices, app.log_scroll, app.log_cursor)
     };
 
     for y in 0..visible_height {
@@ -88,18 +88,18 @@ pub fn draw(f: &mut Frame, app: &App) {
         }
 
         let idx = display_indices[filtered_pos];
-        if idx >= app.log_entries.len() {
+        if idx >= app.log_items.len() {
             break;
         }
 
-        let entry = &app.log_entries[idx];
+        let item = &app.log_items[idx];
         let is_selected = if app.search_active {
             filtered_pos == selected_idx
         } else {
             idx == app.log_cursor
         };
 
-        let line = render_log_entry(entry, list_area.width as usize, is_selected);
+        let line = render_log_item(item, list_area.width as usize, is_selected);
         let entry_area = Rect {
             x: list_area.x,
             y: list_area.y + y as u16,
@@ -144,6 +144,42 @@ fn render_search_bar(f: &mut Frame, area: Rect, query: &str, result_count: usize
     ]);
     let bar = Paragraph::new(line).style(Style::default().bg(Color::Rgb(30, 30, 40)));
     f.render_widget(bar, area);
+}
+
+fn render_log_item(item: &LogItem, width: usize, is_selected: bool) -> Line<'static> {
+    match item {
+        LogItem::WorkingTree => render_special_entry("WORKING TREE", width, is_selected),
+        LogItem::Staged => render_special_entry("STAGED (INDEX)", width, is_selected),
+        LogItem::Separator => {
+            let sep = "─".repeat(width.min(80));
+            Line::from(Span::styled(sep, Style::default().fg(Color::Rgb(60, 60, 60))))
+        }
+        LogItem::Commit(entry) => render_log_entry(entry, width, is_selected),
+    }
+}
+
+fn render_special_entry(label: &str, _width: usize, is_selected: bool) -> Line<'static> {
+    let prefix = if is_selected { " > " } else { "   " };
+
+    let spans = vec![
+        Span::styled(prefix.to_string(), if is_selected {
+            highlights::selected_style()
+        } else {
+            Style::default()
+        }),
+        Span::styled(
+            label.to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    let mut line = Line::from(spans);
+    if is_selected {
+        line = line.style(highlights::selected_style());
+    }
+    line
 }
 
 fn render_log_entry(entry: &LogEntry, width: usize, is_selected: bool) -> Line<'static> {

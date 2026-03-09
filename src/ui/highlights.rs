@@ -79,8 +79,15 @@ pub fn tree_directory_style() -> Style {
 /// Style for the selected item.
 pub fn selected_style() -> Style {
     Style::default()
-        .bg(Color::Rgb(50, 50, 80))
+        .bg(Color::Rgb(60, 60, 120))
         .add_modifier(Modifier::BOLD)
+}
+
+/// Left-edge bar indicator for the cursor line in the tree.
+pub fn tree_cursor_bar_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(100, 140, 255))
+        .bg(Color::Rgb(60, 60, 120))
 }
 
 /// Style for the tree current file highlight.

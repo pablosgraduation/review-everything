@@ -82,13 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app::DiffMode::StagedVsCommit(c) => Some(format!("{c} vs staged")),
         };
 
-        match app.load_diff(mode, context) {
-            Ok(()) => app.run(&mut terminal),
-            Err(e) => {
-                app.view = app::View::Error(e);
-                app.run(&mut terminal)
-            }
-        }
+        app.start_diff_loading(mode, context);
+        app.run(&mut terminal)
     } else {
         // Log view mode
         match app.load_log() {

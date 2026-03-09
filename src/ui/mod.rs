@@ -18,16 +18,60 @@ pub fn draw(f: &mut Frame, app: &App) {
         View::Log => log_view::draw(f, app),
         View::Diff => layout::draw_diff_layout(f, app),
         View::Compare(_) => compare::draw(f, app),
-        View::Loading(msg) => draw_loading(f, msg),
+        View::Loading(_) => draw_loading(f, app),
         View::Error(msg) => draw_error(f, msg),
         View::Help => draw_help(f),
     }
 }
 
-fn draw_loading(f: &mut Frame, msg: &str) {
-    use ratatui::layout::{Constraint, Layout};
+fn draw_loading(f: &mut Frame, app: &App) {
+    use std::sync::atomic::Ordering;
+
+    use ratatui::layout::{Alignment, Constraint, Layout};
     use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
     use ratatui::widgets::{Block, Borders, Paragraph};
+
+    const SPINNERS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+    let (tick, completed) = app
+        .loading_state
+        .as_ref()
+        .map(|s| (s.tick, s.completed.load(Ordering::Relaxed)))
+        .unwrap_or((0, 0));
+
+    let spinner = SPINNERS[tick % SPINNERS.len()];
+
+    let context_msg = match &app.view {
+        View::Loading(msg) => msg.as_str(),
+        _ => "",
+    };
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(" {spinner} "),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            context_msg.to_string(),
+            Style::default().fg(Color::Yellow),
+        )),
+    ];
+
+    if completed > 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("{completed} files processed"),
+            Style::default().fg(Color::White),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press q to cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
 
     let area = f.area();
     let block = Block::default()
@@ -36,15 +80,15 @@ fn draw_loading(f: &mut Frame, msg: &str) {
         .title(" re ")
         .style(Style::default().fg(Color::White));
 
-    let paragraph = Paragraph::new(msg.to_string())
-        .style(Style::default().fg(Color::Yellow))
+    let content_height = if completed > 0 { 9u16 } else { 7u16 };
+    let paragraph = Paragraph::new(lines)
         .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
+        .alignment(Alignment::Center);
 
     let vertical = Layout::vertical([
-        Constraint::Percentage(40),
-        Constraint::Length(3),
-        Constraint::Percentage(40),
+        Constraint::Percentage(35),
+        Constraint::Length(content_height),
+        Constraint::Percentage(35),
     ])
     .split(area);
 

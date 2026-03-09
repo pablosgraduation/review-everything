@@ -2,6 +2,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
@@ -52,6 +56,33 @@ pub struct CompareItem {
     pub subject: Option<String>,
 }
 
+/// An item in the log view: either a special entry or a commit.
+#[derive(Debug, Clone)]
+pub enum LogItem {
+    WorkingTree,
+    Staged,
+    Separator,
+    Commit(LogEntry),
+}
+
+/// Message sent from the background diff thread.
+pub enum DiffMessage {
+    Done(DiffPayload),
+    Error(String),
+}
+
+/// Result of a background diff computation.
+pub struct DiffPayload {
+    pub files: Vec<DisplayFile>,
+}
+
+/// State tracked while a diff is loading in the background.
+pub struct LoadingState {
+    pub rx: mpsc::Receiver<DiffMessage>,
+    pub completed: Arc<AtomicUsize>,
+    pub tick: usize,
+}
+
 /// Main application state.
 pub struct App {
     pub view: View,
@@ -72,6 +103,7 @@ pub struct App {
     pub diff_cursor: usize,
 
     // Log view state
+    pub log_items: Vec<LogItem>,
     pub log_entries: Vec<LogEntry>,
     pub log_cursor: usize,
     pub log_scroll: usize,
@@ -88,6 +120,9 @@ pub struct App {
 
     // Input
     pub input_state: InputState,
+
+    // Background loading
+    pub loading_state: Option<LoadingState>,
 }
 
 impl App {
@@ -105,6 +140,7 @@ impl App {
             tree_cursor: 0,
             diff_context: None,
             diff_cursor: 0,
+            log_items: Vec::new(),
             log_entries: Vec::new(),
             log_cursor: 0,
             log_scroll: 0,
@@ -114,61 +150,128 @@ impl App {
             search_cursor: 0,
             search_scroll: 0,
             input_state: InputState::default(),
+            loading_state: None,
         }
     }
 
-    /// Load diff data for a given mode.
-    pub fn load_diff(
-        &mut self,
-        mode: DiffMode,
-        context: Option<String>,
-    ) -> Result<(), String> {
-        self.diff_context = context;
-        let (files, stats, renames) = run_diff(&mode)?;
+    /// Spawn a background thread to compute the diff.
+    pub fn start_diff_loading(&mut self, mode: DiffMode, context: Option<String>) {
+        let (tx, rx) = mpsc::channel();
+        let completed = Arc::new(AtomicUsize::new(0));
+        let completed_clone = completed.clone();
 
-        let mut display_files = process_diff_files(files, &stats, &mode)?;
+        self.diff_context = context.clone();
+        let loading_msg = context.unwrap_or_else(|| "Computing diff...".to_string());
+        self.view = View::Loading(loading_msg);
+        self.loading_state = Some(LoadingState { rx, completed, tick: 0 });
 
-        // Apply renames
-        if !renames.is_empty() {
-            apply_renames(&mut display_files, &renames);
-        }
+        std::thread::spawn(move || {
+            let result = run_diff_background(mode, completed_clone);
+            let _ = tx.send(match result {
+                Ok(files) => DiffMessage::Done(DiffPayload { files }),
+                Err(e) => DiffMessage::Error(e),
+            });
+        });
+    }
 
-        // Include untracked files for unstaged/working-tree modes
-        if matches!(mode, DiffMode::Unstaged | DiffMode::WorkingTree(_)) {
-            let untracked = load_untracked_files();
-            display_files.extend(untracked);
-        }
-
-        // Filter out unchanged files
-        display_files.retain(|f| f.status != FileStatus::Unchanged);
-
-        self.files = display_files;
+    /// Apply a completed diff result to the app state.
+    fn apply_diff_result(&mut self, payload: DiffPayload) {
+        self.files = payload.files;
         self.nav = NavState::new(self.files.len());
         self.tree_nodes = tree_pane::build_tree(&self.files);
         self.tree_scroll = 0;
         self.tree_cursor = 0;
-
-        // Auto-scroll to first hunk
         self.nav.auto_scroll_to_first_hunk(&self.files);
         self.diff_cursor = self.nav.scroll();
-
         self.view = View::Diff;
-        Ok(())
+    }
+
+    /// Cancel a loading operation and return to the previous view.
+    /// Returns true if the app should exit.
+    fn cancel_loading(&mut self) -> bool {
+        self.loading_state = None;
+        if self.launched_with_args {
+            return true;
+        }
+        self.view = View::Log;
+        false
     }
 
     /// Load the commit log.
     pub fn load_log(&mut self) -> Result<(), String> {
         self.log_entries = git::git_log(200)?;
+        self.rebuild_log_items();
         self.log_cursor = 0;
         self.log_scroll = 0;
         self.view = View::Log;
         Ok(())
     }
 
+    /// Rebuild the log_items list from current state.
+    pub fn rebuild_log_items(&mut self) {
+        let mut items = Vec::new();
+        let mut has_special = false;
+
+        if git::has_unstaged_changes() {
+            items.push(LogItem::WorkingTree);
+            has_special = true;
+        }
+        if git::has_staged_changes() {
+            items.push(LogItem::Staged);
+            has_special = true;
+        }
+        if has_special {
+            items.push(LogItem::Separator);
+        }
+
+        for entry in &self.log_entries {
+            items.push(LogItem::Commit(entry.clone()));
+        }
+
+        self.log_items = items;
+    }
+
     /// Run the main event loop.
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         loop {
             terminal.draw(|f| ui::draw(f, self))?;
+
+            // Check for background diff results
+            if self.loading_state.is_some() {
+                self.loading_state.as_mut().unwrap().tick += 1;
+
+                match self.loading_state.as_ref().unwrap().rx.try_recv() {
+                    Ok(DiffMessage::Done(payload)) => {
+                        self.loading_state = None;
+                        self.apply_diff_result(payload);
+                        continue; // Redraw immediately with new view
+                    }
+                    Ok(DiffMessage::Error(e)) => {
+                        self.loading_state = None;
+                        self.view = View::Error(e);
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        self.loading_state = None;
+                        self.view = View::Error(
+                            "Diff computation failed unexpectedly".to_string(),
+                        );
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+            }
+
+            // Wait for input: poll during loading (for spinner), block otherwise
+            let has_event = if self.loading_state.is_some() {
+                event::poll(Duration::from_millis(66))?
+            } else {
+                true // event::read() below will block
+            };
+
+            if !has_event {
+                continue;
+            }
 
             if let Event::Key(key) = event::read()? {
                 // Search mode intercepts all key events
@@ -207,7 +310,14 @@ impl App {
                         }
                         continue;
                     }
-                    View::Loading(_) => continue,
+                    View::Loading(_) => {
+                        if matches!(action, Action::Quit) {
+                            if self.cancel_loading() {
+                                return Ok(());
+                            }
+                        }
+                        continue;
+                    }
                     _ => {}
                 }
 
@@ -230,14 +340,17 @@ impl App {
     }
 
     fn handle_log_action(&mut self, action: Action) -> bool {
+        let item_count = self.log_items.len();
         match action {
             Action::Quit => return true,
             Action::ScrollDown(n) => {
-                self.log_cursor = (self.log_cursor + n).min(self.log_entries.len().saturating_sub(1));
+                self.log_cursor = (self.log_cursor + n).min(item_count.saturating_sub(1));
+                self.skip_separator_down(item_count);
                 self.ensure_log_visible();
             }
             Action::ScrollUp(n) => {
                 self.log_cursor = self.log_cursor.saturating_sub(n);
+                self.skip_separator_up();
                 self.ensure_log_visible();
             }
             Action::ScrollToTop => {
@@ -245,26 +358,35 @@ impl App {
                 self.log_scroll = 0;
             }
             Action::ScrollToBottom => {
-                self.log_cursor = self.log_entries.len().saturating_sub(1);
+                self.log_cursor = item_count.saturating_sub(1);
                 self.ensure_log_visible();
             }
             Action::HalfPageDown => {
-                self.log_cursor = (self.log_cursor + 15).min(self.log_entries.len().saturating_sub(1));
+                self.log_cursor = (self.log_cursor + 15).min(item_count.saturating_sub(1));
+                self.skip_separator_down(item_count);
                 self.ensure_log_visible();
             }
             Action::HalfPageUp => {
                 self.log_cursor = self.log_cursor.saturating_sub(15);
+                self.skip_separator_up();
                 self.ensure_log_visible();
             }
             Action::Select => {
-                if let Some(entry) = self.log_entries.get(self.log_cursor).cloned() {
-                    let range = entry.full_hash.clone();
-                    let date_only = entry.date.split(' ').next().unwrap_or(&entry.date);
-                    let context = format!("{} {} {}", entry.short_hash, date_only, truncate(&entry.subject, 20));
-                    self.view = View::Loading("Computing diff...".to_string());
-                    match self.load_diff(DiffMode::Range(range), Some(context)) {
-                        Ok(()) => {}
-                        Err(e) => self.view = View::Error(e),
+                if let Some(item) = self.log_items.get(self.log_cursor).cloned() {
+                    match item {
+                        LogItem::WorkingTree => {
+                            self.start_diff_loading(DiffMode::Unstaged, Some("Working Tree".to_string()));
+                        }
+                        LogItem::Staged => {
+                            self.start_diff_loading(DiffMode::Staged, Some("Staged".to_string()));
+                        }
+                        LogItem::Commit(entry) => {
+                            let range = entry.full_hash.clone();
+                            let date_only = entry.date.split(' ').next().unwrap_or(&entry.date);
+                            let context = format!("{} {} {}", entry.short_hash, date_only, truncate(&entry.subject, 20));
+                            self.start_diff_loading(DiffMode::Range(range), Some(context));
+                        }
+                        LogItem::Separator => {}
                     }
                 }
             }
@@ -280,6 +402,24 @@ impl App {
             _ => {}
         }
         false
+    }
+
+    /// Skip over separator lines when scrolling down.
+    fn skip_separator_down(&mut self, item_count: usize) {
+        if matches!(self.log_items.get(self.log_cursor), Some(LogItem::Separator)) {
+            if self.log_cursor + 1 < item_count {
+                self.log_cursor += 1;
+            }
+        }
+    }
+
+    /// Skip over separator lines when scrolling up.
+    fn skip_separator_up(&mut self) {
+        if matches!(self.log_items.get(self.log_cursor), Some(LogItem::Separator)) {
+            if self.log_cursor > 0 {
+                self.log_cursor -= 1;
+            }
+        }
     }
 
     fn handle_diff_action(&mut self, action: Action) {
@@ -610,10 +750,7 @@ impl App {
                             let context = format!("{} -> {}", old_short, new_short);
 
                             let mode = resolve_compare_mode(&old_rev, &new_rev);
-                            match self.load_diff(mode, Some(context)) {
-                                Ok(()) => {}
-                                Err(e) => self.view = View::Error(e),
-                            }
+                            self.start_diff_loading(mode, Some(context));
                         }
                     }
                 }
@@ -744,9 +881,9 @@ impl App {
                 self.search_query.pop();
                 self.update_search_filter();
             }
-            (KeyCode::Down, KeyModifiers::CONTROL) | (KeyCode::Char('G'), KeyModifiers::SHIFT) => {
-                let max = self.search_filtered.len().saturating_sub(1) as i32;
-                self.search_move_cursor_to(max as usize);
+            (KeyCode::Down, KeyModifiers::CONTROL) => {
+                let max = self.search_filtered.len().saturating_sub(1);
+                self.search_move_cursor_to(max);
             }
             (KeyCode::Up, KeyModifiers::CONTROL) => {
                 self.search_move_cursor_to(0);
@@ -757,10 +894,10 @@ impl App {
             (KeyCode::Up, KeyModifiers::SHIFT) => {
                 self.search_move_cursor(-5);
             }
-            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+            (KeyCode::Down, KeyModifiers::NONE) => {
                 self.search_move_cursor(1);
             }
-            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+            (KeyCode::Up, KeyModifiers::NONE) => {
                 self.search_move_cursor(-1);
             }
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
@@ -777,17 +914,24 @@ impl App {
         match &self.view {
             View::Log => {
                 if query.is_empty() {
-                    self.search_filtered = (0..self.log_entries.len()).collect();
+                    self.search_filtered = (0..self.log_items.len())
+                        .filter(|i| !matches!(self.log_items.get(*i), Some(LogItem::Separator)))
+                        .collect();
                 } else {
                     self.search_filtered = self
-                        .log_entries
+                        .log_items
                         .iter()
                         .enumerate()
-                        .filter(|(_, e)| {
-                            e.short_hash.to_lowercase().contains(&query)
-                                || e.full_hash.to_lowercase().contains(&query)
-                                || e.date.to_lowercase().contains(&query)
-                                || e.subject.to_lowercase().contains(&query)
+                        .filter(|(_, item)| match item {
+                            LogItem::WorkingTree => "working tree".contains(&query),
+                            LogItem::Staged => "staged index".contains(&query),
+                            LogItem::Separator => false,
+                            LogItem::Commit(e) => {
+                                e.short_hash.to_lowercase().contains(&query)
+                                    || e.full_hash.to_lowercase().contains(&query)
+                                    || e.date.to_lowercase().contains(&query)
+                                    || e.subject.to_lowercase().contains(&query)
+                            }
                         })
                         .map(|(i, _)| i)
                         .collect();
@@ -1018,23 +1162,32 @@ pub enum DiffMode {
 
 type DiffResult = (Vec<difft::DifftFile>, git::FileStats, HashMap<PathBuf, PathBuf>);
 
+/// Run the full diff pipeline in a background thread.
+fn run_diff_background(
+    mode: DiffMode,
+    completed: Arc<AtomicUsize>,
+) -> Result<Vec<DisplayFile>, String> {
+    let (files, stats, renames) = run_diff(&mode, &completed)?;
+    let mut display_files = process_diff_files(files, &stats, &mode)?;
+
+    if !renames.is_empty() {
+        apply_renames(&mut display_files, &renames);
+    }
+
+    if matches!(mode, DiffMode::Unstaged | DiffMode::WorkingTree(_)) {
+        let untracked = load_untracked_files();
+        display_files.extend(untracked);
+    }
+
+    display_files.retain(|f| f.status != FileStatus::Unchanged);
+    Ok(display_files)
+}
+
 /// Runs the diff and returns (difft_files, stats, renames).
-fn run_diff(mode: &DiffMode) -> Result<DiffResult, String> {
-    let (old_ref, new_ref) = match mode {
+fn run_diff(mode: &DiffMode, completed: &AtomicUsize) -> Result<DiffResult, String> {
+    let extra_args: Vec<String> = match mode {
         DiffMode::Range(range) => {
             let (o, n) = git::parse_git_range(range);
-            (Some(o), Some(n))
-        }
-        DiffMode::Unstaged => (None, None),
-        DiffMode::Staged => (Some("HEAD".to_string()), None),
-        DiffMode::WorkingTree(commit) => (Some(commit.clone()), None),
-        DiffMode::StagedVsCommit(commit) => (Some(commit.clone()), None),
-    };
-
-    let extra_args: Vec<String> = match mode {
-        DiffMode::Range(_) => {
-            let o = old_ref.as_deref().unwrap();
-            let n = new_ref.as_deref().unwrap();
             vec![format!("{o}..{n}")]
         }
         DiffMode::Unstaged => vec![],
@@ -1052,13 +1205,7 @@ fn run_diff(mode: &DiffMode) -> Result<DiffResult, String> {
     let renames_refs = refs.clone();
 
     let (files_result, stats, renames) = std::thread::scope(|s| {
-        let files_handle = s.spawn(|| {
-            if let (Some(o), Some(n)) = (old_ref, new_ref) {
-                run_parallel_diff(&refs, &o, &n)
-            } else {
-                run_sequential_diff(&refs)
-            }
-        });
+        let files_handle = s.spawn(|| run_parallel_diff(&refs, mode, completed));
         let stats_handle = s.spawn(|| git::git_diff_stats(&stats_refs));
         let renames_handle = s.spawn(|| git::git_rename_map(&renames_refs));
 
@@ -1073,13 +1220,50 @@ fn run_diff(mode: &DiffMode) -> Result<DiffResult, String> {
     Ok((files, stats, renames))
 }
 
-/// Run difft directly per file in parallel with integrity checks.
+/// How to fetch one side of a diff.
+enum FetchMethod {
+    FromRef(String),
+    FromIndex,
+    FromWorkingTree,
+}
+
+impl FetchMethod {
+    fn fetch(&self, path: &std::path::Path) -> Option<String> {
+        match self {
+            Self::FromRef(r) => git::git_file_content(r, path),
+            Self::FromIndex => git::git_index_content(path),
+            Self::FromWorkingTree => git::working_tree_content(path),
+        }
+    }
+}
+
+/// Run difft per file in parallel for all diff modes.
 fn run_parallel_diff(
     extra_args: &[&str],
-    old_ref: &str,
-    new_ref: &str,
+    mode: &DiffMode,
+    completed: &AtomicUsize,
 ) -> Result<Vec<difft::DifftFile>, String> {
     use rayon::prelude::*;
+
+    let (old_fetch, new_fetch) = match mode {
+        DiffMode::Range(range) => {
+            let (old_ref, new_ref) = git::parse_git_range(range);
+            (FetchMethod::FromRef(old_ref), FetchMethod::FromRef(new_ref))
+        }
+        DiffMode::Unstaged => (FetchMethod::FromIndex, FetchMethod::FromWorkingTree),
+        DiffMode::Staged => (
+            FetchMethod::FromRef("HEAD".to_string()),
+            FetchMethod::FromIndex,
+        ),
+        DiffMode::WorkingTree(commit) => (
+            FetchMethod::FromRef(commit.clone()),
+            FetchMethod::FromWorkingTree,
+        ),
+        DiffMode::StagedVsCommit(commit) => (
+            FetchMethod::FromRef(commit.clone()),
+            FetchMethod::FromIndex,
+        ),
+    };
 
     let entries = git::git_changed_files(extra_args)?;
     let expected_count = entries.len();
@@ -1136,22 +1320,16 @@ fn run_parallel_diff(
             let old_content = if entry.status.starts_with('A') {
                 String::new()
             } else {
-                git::git_file_content(old_ref, &entry.old_path).ok_or_else(|| {
-                    format!(
-                        "{path_display}: failed to fetch old content from {old_ref}:{}",
-                        entry.old_path.display()
-                    )
+                old_fetch.fetch(&entry.old_path).ok_or_else(|| {
+                    format!("{path_display}: failed to fetch old content")
                 })?
             };
 
             let new_content = if entry.status.starts_with('D') {
                 String::new()
             } else {
-                git::git_file_content(new_ref, &entry.new_path).ok_or_else(|| {
-                    format!(
-                        "{path_display}: failed to fetch new content from {new_ref}:{}",
-                        entry.new_path.display()
-                    )
+                new_fetch.fetch(&entry.new_path).ok_or_else(|| {
+                    format!("{path_display}: failed to fetch new content")
                 })?
             };
 
@@ -1179,6 +1357,7 @@ fn run_parallel_diff(
             let json = String::from_utf8_lossy(&output.stdout);
             if json.trim().is_empty() {
                 let lang = git::language_from_ext(&entry.new_path);
+                completed.fetch_add(1, Ordering::Relaxed);
                 return Ok(difft::DifftFile {
                     path: entry.new_path,
                     language: lang,
@@ -1200,6 +1379,7 @@ fn run_parallel_diff(
 
             let mut file = parsed.remove(0);
             file.path = entry.new_path;
+            completed.fetch_add(1, Ordering::Relaxed);
             Ok(file)
         })
         .collect();
@@ -1221,27 +1401,6 @@ fn run_parallel_diff(
     integrity::verify(&expected_entries, &all_files)?;
 
     Ok(all_files)
-}
-
-/// Run difft via git's ext-diff mechanism (sequential).
-fn run_sequential_diff(extra_args: &[&str]) -> Result<Vec<difft::DifftFile>, String> {
-    let mut args = vec!["-c", "diff.external=difft", "diff"];
-    args.extend(extra_args);
-
-    let output = std::process::Command::new("git")
-        .args(&args)
-        .env("DFT_DISPLAY", "json")
-        .env("DFT_UNSTABLE", "yes")
-        .output()
-        .map_err(|e| format!("Failed to run git: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git command failed: {stderr}"));
-    }
-
-    difft::parse(&String::from_utf8_lossy(&output.stdout))
-        .map_err(|e| format!("Failed to parse difftastic JSON: {e}"))
 }
 
 /// Content fetcher strategy.

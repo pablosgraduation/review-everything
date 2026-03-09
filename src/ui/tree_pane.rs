@@ -270,6 +270,13 @@ pub fn render_tree(
 fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cursor: bool) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
 
+    // Left bar indicator for cursor
+    if is_cursor {
+        spans.push(Span::styled("▌", highlights::tree_cursor_bar_style()));
+    } else {
+        spans.push(Span::raw(" "));
+    }
+
     // Indentation
     let indent = "  ".repeat(node.depth as usize);
     spans.push(Span::raw(indent));
