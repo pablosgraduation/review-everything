@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-Interactive TUI diff viewer powered by <a href="https://difftastic.wilfred.me.uk/">difftastic</a>.
+Interactive TUI diff viewer powered by <a href="https://difftastic.wilfred.me.uk/">difftastic</a>
 </p>
 
 <!-- TODO: add screenshot or demo GIF -->
