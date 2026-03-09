@@ -189,6 +189,10 @@ fn draw_help(f: &mut Frame) {
             Span::styled("Tab         ", key_style),
             Span::styled("Toggle tree/diff focus", desc_style),
         ]),
+        Line::from(vec![
+            Span::styled("t           ", key_style),
+            Span::styled("Toggle file tree", desc_style),
+        ]),
         Line::from(""),
         Line::from(Span::styled("General", header_style)),
         Line::from(vec![

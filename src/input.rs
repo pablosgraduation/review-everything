@@ -21,6 +21,7 @@ pub enum Action {
     NextFile,
     PrevFile,
     ToggleTreeFocus,
+    ToggleTree,
     Select,
     ToggleCollapse,
     StartCompare,
@@ -102,8 +103,15 @@ impl InputState {
             (KeyCode::Right, KeyModifiers::CONTROL) => Action::ScrollToLineEnd,
 
             // Navigation
-            (KeyCode::Tab, KeyModifiers::NONE) if view == ViewContext::Diff => {
+            (KeyCode::Tab, KeyModifiers::NONE)
+                if view == ViewContext::Diff || view == ViewContext::Tree =>
+            {
                 Action::ToggleTreeFocus
+            }
+            (KeyCode::Char('t'), KeyModifiers::NONE)
+                if view == ViewContext::Diff || view == ViewContext::Tree =>
+            {
+                Action::ToggleTree
             }
             (KeyCode::Enter, KeyModifiers::NONE) => Action::Select,
             (KeyCode::Char('o'), KeyModifiers::NONE) if view == ViewContext::Tree => {

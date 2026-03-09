@@ -97,6 +97,7 @@ pub struct App {
     pub tree_nodes: Vec<TreeNode>,
     pub tree_scroll: usize,
     pub tree_focused: bool,
+    pub auto_hide_tree: bool,
     pub tree_cursor: usize,
     pub diff_context: Option<String>,
     /// Current cursor row in diff view (highlighted line).
@@ -137,6 +138,7 @@ impl App {
             tree_nodes: Vec::new(),
             tree_scroll: 0,
             tree_focused: false,
+            auto_hide_tree: false,
             tree_cursor: 0,
             diff_context: None,
             diff_cursor: 0,
@@ -553,6 +555,16 @@ impl App {
             }
             Action::ToggleTreeFocus => {
                 self.tree_focused = !self.tree_focused;
+                if self.tree_focused && !self.show_tree {
+                    self.show_tree = true;
+                }
+                if !self.tree_focused && self.auto_hide_tree {
+                    self.show_tree = false;
+                }
+            }
+            Action::ToggleTree => {
+                self.show_tree = !self.show_tree;
+                self.tree_focused = self.show_tree;
             }
             Action::Select => {
                 if self.tree_focused {
@@ -563,6 +575,9 @@ impl App {
                             self.nav.auto_scroll_to_first_hunk(&self.files);
                             self.diff_cursor = self.nav.scroll();
                             self.tree_focused = false;
+                            if self.auto_hide_tree {
+                                self.show_tree = false;
+                            }
                         } else if node.is_dir {
                             tree_pane::toggle_node(&mut self.tree_nodes, self.tree_cursor);
                         }

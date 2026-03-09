@@ -35,6 +35,10 @@ struct Cli {
     #[arg(long = "tree-width", default_value = "35")]
     tree_width: u16,
 
+    /// Auto-hide tree when unfocused
+    #[arg(long = "auto-hide-tree")]
+    auto_hide_tree: bool,
+
     /// Highlight mode
     #[arg(long, default_value = "difftastic", value_parser = ["difftastic", "none"])]
     highlight: String,
@@ -58,6 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = app::App::new();
     app.show_tree = !cli.no_tree;
     app.tree_width = cli.tree_width;
+    app.auto_hide_tree = cli.auto_hide_tree;
 
     // Determine mode from CLI args
     let direct_mode = if cli.staged {
