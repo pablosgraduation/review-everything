@@ -93,8 +93,9 @@ pub fn tree_cursor_bar_style() -> Style {
 /// Style for the tree current file highlight.
 pub fn tree_current_style() -> Style {
     Style::default()
-        .bg(Color::Rgb(40, 40, 60))
+        .bg(Color::Rgb(66, 66, 72))
 }
+
 
 /// Style for stats numbers.
 pub fn additions_style() -> Style {
