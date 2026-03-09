@@ -1180,6 +1180,7 @@ fn run_diff_background(
     }
 
     display_files.retain(|f| f.status != FileStatus::Unchanged);
+    integrity::verify_display(&display_files)?;
     Ok(display_files)
 }
 
