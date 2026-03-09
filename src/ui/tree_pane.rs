@@ -147,6 +147,7 @@ pub fn flatten_visible(nodes: &[TreeNode], depth: u16) -> Vec<FlatNode> {
             depth,
             expanded: node.expanded,
             moved_from: node.moved_from.clone(),
+            is_reviewed: false,
         });
 
         if node.is_dir && node.expanded {
@@ -169,6 +170,7 @@ pub struct FlatNode {
     pub depth: u16,
     pub expanded: bool,
     pub moved_from: Option<String>,
+    pub is_reviewed: bool,
 }
 
 /// Parameters for rendering the tree pane.
@@ -180,6 +182,7 @@ pub struct TreeRenderParams {
     pub total_additions: u32,
     pub total_deletions: u32,
     pub file_count: usize,
+    pub reviewed_count: usize,
 }
 
 /// Renders the tree pane.
@@ -197,6 +200,7 @@ pub fn render_tree(
         total_additions,
         total_deletions,
         file_count,
+        reviewed_count,
     } = *params;
     if area.width < 4 || area.height < 3 {
         return;
@@ -204,20 +208,52 @@ pub fn render_tree(
 
     // Header: stats summary
     let header_y = area.y;
-    let stats_text = format!("{} files  +{} -{}", file_count, total_additions, total_deletions);
+    let reviewed_part = if reviewed_count > 0 {
+        format!(" {}/{} \u{2713} ", reviewed_count, file_count)
+    } else {
+        String::new()
+    };
+    let stats_text = format!("{} files{}  +{} -{}", file_count, reviewed_part, total_additions, total_deletions);
     let padding = (area.width as usize).saturating_sub(stats_text.len()) / 2;
 
     // Render stats with colors
     let mut x = area.x + padding as u16;
-    let files_part = format!("{} files  ", file_count);
-    let add_part = format!("+{}", total_additions);
-    let del_part = format!(" -{}", total_deletions);
+    let files_part = format!("{} files", file_count);
 
     for ch in files_part.chars() {
         if x < area.x + area.width {
             buf[(x, header_y)]
                 .set_char(ch)
                 .set_style(Style::default().fg(ratatui::style::Color::White));
+            x += 1;
+        }
+    }
+
+    if reviewed_count > 0 {
+        let review_style = if reviewed_count == file_count {
+            Style::default().fg(ratatui::style::Color::Green)
+        } else {
+            Style::default().fg(ratatui::style::Color::Rgb(120, 120, 120))
+        };
+        for ch in reviewed_part.chars() {
+            if x < area.x + area.width {
+                buf[(x, header_y)]
+                    .set_char(ch)
+                    .set_style(review_style);
+                x += 1;
+            }
+        }
+    }
+
+    let spacing = "  ";
+    let add_part = format!("+{}", total_additions);
+    let del_part = format!(" -{}", total_deletions);
+
+    for ch in spacing.chars() {
+        if x < area.x + area.width {
+            buf[(x, header_y)]
+                .set_char(ch)
+                .set_style(Style::default());
             x += 1;
         }
     }
@@ -268,6 +304,9 @@ pub fn render_tree(
 }
 
 fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cursor: bool) -> Line<'static> {
+    let dim = node.is_reviewed;
+    let dim_fg = ratatui::style::Color::Rgb(80, 80, 80);
+
     let mut spans: Vec<Span<'static>> = Vec::new();
 
     // Left bar indicator for cursor
@@ -288,7 +327,9 @@ fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cur
         "  "
     };
 
-    let icon_style = if node.is_dir {
+    let icon_style = if dim {
+        Style::default().fg(dim_fg)
+    } else if node.is_dir {
         highlights::tree_directory_style()
     } else {
         Style::default()
@@ -297,17 +338,25 @@ fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cur
 
     // Name
     if let Some(ref moved_from) = node.moved_from {
-        spans.push(Span::styled(
-            moved_from.clone(),
-            Style::default().fg(ratatui::style::Color::Red),
-        ));
-        spans.push(Span::raw(" -> "));
-        spans.push(Span::styled(
-            node.name.clone(),
-            Style::default().fg(ratatui::style::Color::Green),
-        ));
+        if dim {
+            spans.push(Span::styled(moved_from.clone(), Style::default().fg(dim_fg)));
+            spans.push(Span::styled(" -> ", Style::default().fg(dim_fg)));
+            spans.push(Span::styled(node.name.clone(), Style::default().fg(dim_fg)));
+        } else {
+            spans.push(Span::styled(
+                moved_from.clone(),
+                Style::default().fg(ratatui::style::Color::Red),
+            ));
+            spans.push(Span::raw(" -> "));
+            spans.push(Span::styled(
+                node.name.clone(),
+                Style::default().fg(ratatui::style::Color::Green),
+            ));
+        }
     } else {
-        let name_style = if let Some(status) = node.status {
+        let name_style = if dim {
+            Style::default().fg(dim_fg)
+        } else if let Some(status) = node.status {
             Style::default().fg(highlights::status_color(&status))
         } else if node.is_dir {
             highlights::tree_directory_style()
@@ -317,13 +366,21 @@ fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cur
         spans.push(Span::styled(node.name.clone(), name_style));
     }
 
+    // Review mark
+    if dim {
+        spans.push(Span::styled(
+            " \u{2713}",
+            Style::default().fg(dim_fg),
+        ));
+    }
+
     // Stats
     if node.additions > 0 || node.deletions > 0 {
         spans.push(Span::raw(" "));
         if node.additions > 0 {
             spans.push(Span::styled(
                 format!("+{}", node.additions),
-                highlights::additions_style(),
+                if dim { Style::default().fg(dim_fg) } else { highlights::additions_style() },
             ));
             if node.deletions > 0 {
                 spans.push(Span::raw(" "));
@@ -332,7 +389,7 @@ fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cur
         if node.deletions > 0 {
             spans.push(Span::styled(
                 format!("-{}", node.deletions),
-                highlights::deletions_style(),
+                if dim { Style::default().fg(dim_fg) } else { highlights::deletions_style() },
             ));
         }
     }
@@ -342,7 +399,7 @@ fn render_tree_node(node: &FlatNode, _max_width: usize, is_current: bool, is_cur
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             "[NEW]",
-            Style::default().fg(ratatui::style::Color::Green),
+            if dim { Style::default().fg(dim_fg) } else { Style::default().fg(ratatui::style::Color::Green) },
         ));
     }
 

@@ -136,4 +136,6 @@ pub struct DisplayFile {
     pub hunks: Vec<(u32, u32, HunkKind)>,
     /// Original line number mapping per display row.
     pub aligned_lines: Vec<(Option<u32>, Option<u32>)>,
+    /// Hash of (old_lines, new_lines) for review tracking.
+    pub content_hash: u64,
 }

@@ -1,6 +1,7 @@
 //! Application state machine, event loop, and diff loading logic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -16,6 +17,7 @@ use crate::input::{Action, InputState, ViewContext};
 use crate::integrity;
 use crate::nav::{HunkJump, NavState};
 use crate::processor;
+use crate::review;
 use crate::types::{DisplayFile, FileStatus};
 use crate::ui;
 use crate::ui::tree_pane::{self, TreeNode};
@@ -124,6 +126,11 @@ pub struct App {
 
     // Background loading
     pub loading_state: Option<LoadingState>,
+
+    // Review tracking
+    pub reviewed: HashSet<usize>,
+    pub review_store: Option<review::ReviewStore>,
+    pub diff_scope: Option<String>,
 }
 
 impl App {
@@ -153,6 +160,9 @@ impl App {
             search_scroll: 0,
             input_state: InputState::default(),
             loading_state: None,
+            reviewed: HashSet::new(),
+            review_store: git::git_root().ok().and_then(|r| review::ReviewStore::open(&r)),
+            diff_scope: None,
         }
     }
 
@@ -162,6 +172,7 @@ impl App {
         let completed = Arc::new(AtomicUsize::new(0));
         let completed_clone = completed.clone();
 
+        self.diff_scope = Some(mode.scope_key());
         self.diff_context = context.clone();
         let loading_msg = context.unwrap_or_else(|| "Computing diff...".to_string());
         self.view = View::Loading(loading_msg);
@@ -185,6 +196,14 @@ impl App {
         self.tree_cursor = 0;
         self.nav.auto_scroll_to_first_hunk(&self.files);
         self.diff_cursor = self.nav.scroll();
+
+        // Load review marks
+        self.reviewed = if let (Some(store), Some(scope)) = (&self.review_store, &self.diff_scope) {
+            store.reviewed_set(scope, &self.files)
+        } else {
+            HashSet::new()
+        };
+
         self.view = View::Diff;
     }
 
@@ -429,6 +448,8 @@ impl App {
 
         match action {
             Action::Quit => {
+                self.reviewed.clear();
+                self.diff_scope = None;
                 if self.launched_with_args {
                     std::process::exit(0);
                 }
@@ -587,6 +608,39 @@ impl App {
             Action::ToggleCollapse => {
                 if self.tree_focused {
                     tree_pane::toggle_node(&mut self.tree_nodes, self.tree_cursor);
+                }
+            }
+            Action::ToggleReviewed => {
+                let file_idx = if self.tree_focused {
+                    let flat = tree_pane::flatten_visible(&self.tree_nodes, 0);
+                    flat.get(self.tree_cursor).and_then(|n| n.file_idx)
+                } else {
+                    Some(self.nav.current_file)
+                };
+
+                if let Some(idx) = file_idx {
+                    if let Some(file) = self.files.get(idx) {
+                        let path = file.path.to_string_lossy().to_string();
+                        let hash = file.content_hash;
+
+                        if self.reviewed.contains(&idx) {
+                            self.reviewed.remove(&idx);
+                            if let (Some(store), Some(scope)) = (&self.review_store, &self.diff_scope) {
+                                store.unmark(scope, &path);
+                            }
+                        } else {
+                            self.reviewed.insert(idx);
+                            if let (Some(store), Some(scope)) = (&self.review_store, &self.diff_scope) {
+                                store.mark(scope, &path, hash);
+                            }
+                        }
+                    }
+                }
+            }
+            Action::ClearAllReviews => {
+                self.reviewed.clear();
+                if let Some(store) = &self.review_store {
+                    store.clear_all();
                 }
             }
             Action::ShowHelp => {
@@ -1175,6 +1229,33 @@ pub enum DiffMode {
     StagedVsCommit(String),
 }
 
+impl DiffMode {
+    /// Returns a scope key for review tracking: `"old_ref:new_ref"`.
+    pub fn scope_key(&self) -> String {
+        match self {
+            DiffMode::Range(range) => {
+                let (old, new) = git::parse_git_range(range);
+                let old = git::resolve_rev(&old).unwrap_or(old);
+                let new = git::resolve_rev(&new).unwrap_or(new);
+                format!("{old}:{new}")
+            }
+            DiffMode::Unstaged => "INDEX:WORKTREE".into(),
+            DiffMode::Staged => {
+                let head = git::resolve_rev("HEAD").unwrap_or_else(|| "HEAD".into());
+                format!("{head}:INDEX")
+            }
+            DiffMode::WorkingTree(c) => {
+                let c = git::resolve_rev(c).unwrap_or_else(|| c.clone());
+                format!("{c}:WORKTREE")
+            }
+            DiffMode::StagedVsCommit(c) => {
+                let c = git::resolve_rev(c).unwrap_or_else(|| c.clone());
+                format!("{c}:INDEX")
+            }
+        }
+    }
+}
+
 type DiffResult = (Vec<difft::DifftFile>, git::FileStats, HashMap<PathBuf, PathBuf>);
 
 /// Run the full diff pipeline in a background thread.
@@ -1489,7 +1570,8 @@ fn process_diff_files(
             let old_path = file.path.clone();
             let new_path = file.path.clone();
             let (old_lines, new_lines) = fetcher.fetch(&old_path, &new_path);
-            processor::process_file(file, old_lines, new_lines, file_stats)
+            let content_hash = compute_content_hash(&old_lines, &new_lines);
+            processor::process_file(file, old_lines, new_lines, file_stats, content_hash)
         })
         .collect();
 
@@ -1531,6 +1613,8 @@ fn load_untracked_files() -> Vec<DisplayFile> {
             let new_lines: Vec<String> = content.lines().map(String::from).collect();
             let num_lines = new_lines.len() as u32;
             let language = git::language_from_ext(&path);
+            let empty: Vec<String> = vec![];
+            let content_hash = compute_content_hash(&empty, &new_lines);
 
             Some(processor::process_file(
                 difft::DifftFile {
@@ -1543,7 +1627,16 @@ fn load_untracked_files() -> Vec<DisplayFile> {
                 vec![],
                 new_lines,
                 Some((num_lines, 0)),
+                content_hash,
             ))
         })
         .collect()
+}
+
+/// Compute a content hash from old and new lines for review tracking.
+fn compute_content_hash(old_lines: &[String], new_lines: &[String]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    old_lines.hash(&mut hasher);
+    new_lines.hash(&mut hasher);
+    hasher.finish()
 }

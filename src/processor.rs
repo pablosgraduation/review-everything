@@ -11,15 +11,16 @@ pub fn process_file(
     old_lines: Vec<String>,
     new_lines: Vec<String>,
     stats: Option<(u32, u32)>,
+    content_hash: u64,
 ) -> DisplayFile {
     match file.status {
-        Status::Created => process_created(file, new_lines, stats),
-        Status::Deleted => process_deleted(file, old_lines, stats),
-        Status::Changed | Status::Unchanged => process_changed(file, &old_lines, &new_lines, stats),
+        Status::Created => process_created(file, new_lines, stats, content_hash),
+        Status::Deleted => process_deleted(file, old_lines, stats, content_hash),
+        Status::Changed | Status::Unchanged => process_changed(file, &old_lines, &new_lines, stats, content_hash),
     }
 }
 
-fn process_created(file: DifftFile, new_lines: Vec<String>, stats: Option<(u32, u32)>) -> DisplayFile {
+fn process_created(file: DifftFile, new_lines: Vec<String>, stats: Option<(u32, u32)>, content_hash: u64) -> DisplayFile {
     let num_lines = new_lines.len();
     let rows: Vec<Row> = new_lines
         .into_iter()
@@ -45,10 +46,11 @@ fn process_created(file: DifftFile, new_lines: Vec<String>, stats: Option<(u32, 
         rows,
         hunks,
         aligned_lines,
+        content_hash,
     }
 }
 
-fn process_deleted(file: DifftFile, old_lines: Vec<String>, stats: Option<(u32, u32)>) -> DisplayFile {
+fn process_deleted(file: DifftFile, old_lines: Vec<String>, stats: Option<(u32, u32)>, content_hash: u64) -> DisplayFile {
     let num_lines = old_lines.len();
     let rows: Vec<Row> = old_lines
         .into_iter()
@@ -74,6 +76,7 @@ fn process_deleted(file: DifftFile, old_lines: Vec<String>, stats: Option<(u32, 
         rows,
         hunks,
         aligned_lines,
+        content_hash,
     }
 }
 
@@ -105,6 +108,7 @@ fn process_changed(
     old_lines: &[String],
     new_lines: &[String],
     stats: Option<(u32, u32)>,
+    content_hash: u64,
 ) -> DisplayFile {
     let (lhs_changes, rhs_changes) = extract_changes(&file.chunks);
     let num_rows = file.aligned_lines.len();
@@ -191,6 +195,7 @@ fn process_changed(
         rows,
         hunks,
         aligned_lines: file.aligned_lines,
+        content_hash,
     }
 }
 
@@ -312,7 +317,7 @@ mod tests {
             aligned_lines: vec![],
             chunks: vec![],
         };
-        let result = process_file(file, vec![], vec!["a".into(), "b".into()], Some((2, 0)));
+        let result = process_file(file, vec![], vec!["a".into(), "b".into()], Some((2, 0)), 0);
         assert_eq!(result.rows.len(), 2);
         assert!(result.rows[0].left.is_filler);
         assert_eq!(result.rows[0].right.content, "a");
@@ -328,7 +333,7 @@ mod tests {
             aligned_lines: vec![],
             chunks: vec![],
         };
-        let result = process_file(file, vec!["x".into(), "y".into()], vec![], Some((0, 2)));
+        let result = process_file(file, vec!["x".into(), "y".into()], vec![], Some((0, 2)), 0);
         assert_eq!(result.rows.len(), 2);
         assert_eq!(result.rows[0].left.content, "x");
         assert!(result.rows[0].right.is_filler);
@@ -351,6 +356,7 @@ mod tests {
             vec!["line1".into(), "foo".into(), "line3".into()],
             vec!["line1".into(), "foobar".into(), "line3".into()],
             Some((1, 1)),
+            0,
         );
         assert_eq!(result.rows.len(), 3);
         assert!(!result.rows[1].left.highlights.is_empty());
@@ -385,6 +391,7 @@ mod tests {
             vec!["a".into(), "b".into(), "c".into(), "d".into()],
             vec!["a".into(), "B".into(), "c".into(), "d".into(), "e".into()],
             None,
+            0,
         );
         assert_eq!(result.hunks.len(), 2);
         assert_eq!(result.hunks[0].0, 1);  // start

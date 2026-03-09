@@ -184,6 +184,19 @@ pub fn git_untracked_files() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Resolves a revision to its full SHA via `git rev-parse`.
+pub fn resolve_rev(rev: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", rev])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
 /// Parses a git commit range into `(old_commit, new_commit)`.
 pub fn parse_git_range(range: &str) -> (String, String) {
     if let Some((a, b)) = range.split_once("...") {

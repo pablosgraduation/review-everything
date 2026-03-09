@@ -26,6 +26,8 @@ pub enum Action {
     ToggleCollapse,
     StartCompare,
     StartSearch,
+    ToggleReviewed,
+    ClearAllReviews,
     ShowHelp,
     None,
 }
@@ -124,6 +126,16 @@ impl InputState {
                 if view == ViewContext::Log || view == ViewContext::Compare =>
             {
                 Action::StartSearch
+            }
+            (KeyCode::Char('r'), KeyModifiers::NONE)
+                if view == ViewContext::Diff || view == ViewContext::Tree =>
+            {
+                Action::ToggleReviewed
+            }
+            (KeyCode::Char('R'), KeyModifiers::SHIFT)
+                if view == ViewContext::Diff || view == ViewContext::Tree =>
+            {
+                Action::ClearAllReviews
             }
 
             _ => Action::None,

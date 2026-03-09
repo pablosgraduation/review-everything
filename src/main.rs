@@ -7,6 +7,7 @@ mod input;
 mod integrity;
 mod nav;
 mod processor;
+mod review;
 mod types;
 mod ui;
 

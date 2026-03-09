@@ -54,9 +54,26 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Review progress
+    if !app.files.is_empty() {
+        let reviewed = app.reviewed.len();
+        let total = app.files.len();
+        let review_style = if reviewed == total {
+            Style::default()
+                .bg(Color::Rgb(30, 30, 40))
+                .fg(Color::Green)
+        } else {
+            dim_style
+        };
+        spans.push(Span::styled(
+            format!(" reviewed {}/{}", reviewed, total),
+            review_style,
+        ));
+    }
+
     // Fill remaining space
     let used: usize = spans.iter().map(|s| s.content.len()).sum();
-    let hints = " ? help  q quit";
+    let hints = " r reviewed  ? help  q quit";
     let remaining = (area.width as usize).saturating_sub(used + hints.len());
     spans.push(Span::styled(" ".repeat(remaining), style));
     spans.push(Span::styled(hints, key_style));

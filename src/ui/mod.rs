@@ -196,6 +196,10 @@ fn draw_help(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("General", header_style)),
         Line::from(vec![
+            Span::styled("r           ", key_style),
+            Span::styled("Toggle file reviewed", desc_style),
+        ]),
+        Line::from(vec![
             Span::styled("Enter       ", key_style),
             Span::styled("Select / view diff", desc_style),
         ]),

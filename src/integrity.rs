@@ -245,6 +245,7 @@ mod tests {
             rows: vec![],
             hunks: vec![],
             aligned_lines: vec![],
+            content_hash: 0,
         }
     }
 

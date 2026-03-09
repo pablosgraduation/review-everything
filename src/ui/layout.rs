@@ -77,7 +77,14 @@ pub fn draw_diff_layout(f: &mut Frame, app: &App) {
 }
 
 fn render_tree(f: &mut Frame, area: Rect, app: &App) {
-    let flat_nodes = tree_pane::flatten_visible(&app.tree_nodes, 0);
+    let mut flat_nodes = tree_pane::flatten_visible(&app.tree_nodes, 0);
+
+    // Wire reviewed state to flat nodes
+    for node in &mut flat_nodes {
+        if let Some(idx) = node.file_idx {
+            node.is_reviewed = app.reviewed.contains(&idx);
+        }
+    }
 
     let total_additions: u32 = app.files.iter().map(|f| f.additions).sum();
     let total_deletions: u32 = app.files.iter().map(|f| f.deletions).sum();
@@ -94,6 +101,7 @@ fn render_tree(f: &mut Frame, area: Rect, app: &App) {
             total_additions,
             total_deletions,
             file_count: app.files.len(),
+            reviewed_count: app.reviewed.len(),
         },
     );
 }
