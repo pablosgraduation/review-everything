@@ -1,23 +1,16 @@
-<div align="center">
-<pre>
- ██████╗ ███████╗
- ██╔══██╗██╔════╝
- ██████╔╝█████╗  
- ██╔══██╗██╔══╝  
- ██║  ██║███████╗
- ╚═╝  ╚═╝╚══════╝
-</pre>
-<pre>
- ___ _____   _____ _____      __  _____   _____ _____   _______ _  _ ___ _  _  ___
-| _ \ __\ \ / /_ _| __\ \    / / | __\ \ / / __| _ \ \ / /_   _| || |_ _| \| |/ __|
-|   / _| \ V / | || _| \ \/\/ /  | _| \ V /| _||   /\ V /  | | | __ || || .` | (_ |
-|_|_\___| \_/ |___|___| \_/\_/   |___| \_/ |___|_|_\ |_|   |_| |_||_|___|_|\_|\___|
-</pre>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
+    <img alt="re — review everything" src="assets/banner-dark.svg">
+  </picture>
+</p>
 
+<p align="center">
 Interactive TUI diff viewer powered by <a href="https://difftastic.wilfred.me.uk/">difftastic</a>.
+</p>
 
 <!-- TODO: add screenshot or demo GIF -->
-</div>
 
 ## Features
 
