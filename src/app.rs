@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
@@ -152,6 +152,14 @@ pub struct App {
 
     // For diff refresh
     pub last_diff_mode: Option<DiffMode>,
+
+    // Refresh status (displayed at bottom of file tree)
+    pub diff_loaded_at: Option<Instant>,
+    pub initial_file_count: usize,
+    pub diff_refreshed_at: Option<Instant>,
+    pub refresh_delta_text: String,
+    pub baseline_file_paths: HashSet<PathBuf>,
+    pub baseline_file_hashes: HashMap<PathBuf, u64>,
 }
 
 impl App {
@@ -191,6 +199,12 @@ impl App {
             review_store: git::git_root().ok().and_then(|r| review::ReviewStore::open(&r)),
             diff_scope: None,
             last_diff_mode: None,
+            diff_loaded_at: None,
+            initial_file_count: 0,
+            diff_refreshed_at: None,
+            refresh_delta_text: String::new(),
+            baseline_file_paths: HashSet::new(),
+            baseline_file_hashes: HashMap::new(),
         }
     }
 
@@ -218,6 +232,14 @@ impl App {
 
     /// Apply a completed diff result to the app state.
     fn apply_diff_result(&mut self, payload: DiffPayload) {
+        let is_refresh = self.diff_loaded_at.is_some();
+
+        if is_refresh {
+            // Compute delta before replacing files
+            self.refresh_delta_text = self.compute_refresh_delta(&payload.files);
+            self.diff_refreshed_at = Some(Instant::now());
+        }
+
         self.files = payload.files;
         self.nav = NavState::new(self.files.len());
         self.tree_nodes = tree_pane::build_tree(&self.files);
@@ -233,7 +255,64 @@ impl App {
             HashSet::new()
         };
 
+        if !is_refresh {
+            self.diff_loaded_at = Some(Instant::now());
+            self.initial_file_count = self.files.len();
+            self.diff_refreshed_at = None;
+            self.refresh_delta_text.clear();
+        }
+
+        // Capture baseline for next refresh delta
+        self.baseline_file_paths = self.files.iter().map(|f| f.path.clone()).collect();
+        self.baseline_file_hashes = self.files.iter().map(|f| (f.path.clone(), f.content_hash)).collect();
+
         self.view = View::Diff;
+    }
+
+    /// Compute a delta string comparing new files against the current baseline.
+    fn compute_refresh_delta(&self, new_files: &[DisplayFile]) -> String {
+        if self.baseline_file_paths.is_empty() && !new_files.is_empty() {
+            return "? missing baseline".to_string();
+        }
+
+        let current_paths: HashSet<PathBuf> = new_files.iter().map(|f| f.path.clone()).collect();
+        let mut added = 0usize;
+        let mut removed = 0usize;
+        let mut changed = 0usize;
+
+        for f in new_files {
+            if !self.baseline_file_paths.contains(&f.path) {
+                added += 1;
+            } else if let Some(&old_hash) = self.baseline_file_hashes.get(&f.path) {
+                if old_hash != 0 && f.content_hash != 0 && old_hash != f.content_hash {
+                    changed += 1;
+                }
+            }
+        }
+        for p in &self.baseline_file_paths {
+            if !current_paths.contains(p) {
+                removed += 1;
+            }
+        }
+
+        let mut parts = Vec::new();
+        if added > 0 { parts.push(format!("+{added} new")); }
+        if removed > 0 { parts.push(format!("-{removed} removed")); }
+        if changed > 0 { parts.push(format!("{changed} changed")); }
+        if parts.is_empty() { return "no changes".to_string(); }
+        parts.join(" \u{00b7} ")
+    }
+
+    /// Format an Instant as a relative time string (e.g. "2s ago", "3m ago").
+    pub fn fmt_elapsed(instant: &Instant) -> String {
+        let secs = instant.elapsed().as_secs();
+        if secs < 60 {
+            format!("{secs}s ago")
+        } else if secs < 3600 {
+            format!("{}m ago", secs / 60)
+        } else {
+            format!("{}h ago", secs / 3600)
+        }
     }
 
     /// Cancel a loading operation and return to the previous view.

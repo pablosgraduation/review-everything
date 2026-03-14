@@ -183,6 +183,10 @@ pub struct TreeRenderParams {
     pub total_deletions: u32,
     pub file_count: usize,
     pub reviewed_count: usize,
+    /// "loaded 2s ago · 12 files" or empty
+    pub loaded_status: String,
+    /// "updated 5s ago · +3 new · 1 changed" or empty
+    pub refreshed_status: String,
 }
 
 /// Renders the tree pane.
@@ -201,6 +205,7 @@ pub fn render_tree(
         total_deletions,
         file_count,
         reviewed_count,
+        ..
     } = *params;
     if area.width < 4 || area.height < 3 {
         return;
@@ -282,9 +287,15 @@ pub fn render_tree(
             .set_style(highlights::border_style());
     }
 
+    // Status lines at bottom
+    let has_loaded = !params.loaded_status.is_empty();
+    let has_refreshed = !params.refreshed_status.is_empty();
+    let status_lines = has_loaded as u16 + has_refreshed as u16;
+    let status_reserved = if status_lines > 0 { status_lines + 1 } else { 0 }; // +1 for separator
+
     // File tree entries
     let tree_area_start = area.y + 2;
-    let tree_area_height = area.height.saturating_sub(2);
+    let tree_area_height = area.height.saturating_sub(2 + status_reserved);
 
     for y in 0..tree_area_height {
         let node_idx = tree_scroll + y as usize;
@@ -300,6 +311,34 @@ pub fn render_tree(
 
         let line = render_tree_node(node, area.width as usize, is_current, is_cursor);
         buf.set_line(area.x, screen_y, &line, area.width);
+    }
+
+    // Render status at bottom
+    if status_lines > 0 {
+        let status_dim = Style::default().fg(ratatui::style::Color::Rgb(80, 80, 90));
+        let bottom_sep_y = area.y + area.height - status_reserved;
+        for x in area.x..area.x + area.width {
+            buf[(x, bottom_sep_y)]
+                .set_char('─')
+                .set_style(highlights::border_style());
+        }
+
+        let mut status_y = bottom_sep_y + 1;
+        if has_loaded {
+            let line = Line::from(Span::styled(
+                format!(" {}", params.loaded_status),
+                status_dim,
+            ));
+            buf.set_line(area.x, status_y, &line, area.width);
+            status_y += 1;
+        }
+        if has_refreshed {
+            let line = Line::from(Span::styled(
+                format!(" {}", params.refreshed_status),
+                status_dim,
+            ));
+            buf.set_line(area.x, status_y, &line, area.width);
+        }
     }
 }
 
