@@ -191,6 +191,10 @@ fn draw_help(f: &mut Frame) {
             Span::styled("Line start / end", desc_style),
         ]),
         Line::from(vec![
+            Span::styled("Ctrl+Left/Right  ", key_style),
+            Span::styled("Line start / end", desc_style),
+        ]),
+        Line::from(vec![
             Span::styled("Tab              ", key_style),
             Span::styled("Toggle tree/diff focus", desc_style),
         ]),

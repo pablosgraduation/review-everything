@@ -45,10 +45,8 @@ pub fn render_find_bar(f: &mut Frame, area: Rect, app: &App) {
 
     // Fill remaining space
     let used: usize = spans.iter().map(|s| s.content.len()).sum();
-    let hints = " ^O old  ^N new  Enter next  Esc close ";
-    let remaining = (area.width as usize).saturating_sub(used + hints.len());
+    let remaining = (area.width as usize).saturating_sub(used);
     spans.push(Span::styled(" ".repeat(remaining), Style::default().bg(bg)));
-    spans.push(Span::styled(hints, Style::default().bg(bg).fg(Color::Rgb(80, 80, 90))));
 
     let line = Line::from(spans);
     let bar = ratatui::widgets::Paragraph::new(line).style(Style::default().bg(bg));
