@@ -210,20 +210,6 @@ impl App {
 
     /// Spawn a background thread to compute the diff.
     pub fn start_diff_loading(&mut self, mode: DiffMode, context: Option<String>) {
-        let is_refresh = self.last_diff_mode.is_some()
-            && self.diff_loaded_time.is_some()
-            && self.last_diff_mode.as_ref().map(|m| m.scope_key()) == Some(mode.scope_key());
-
-        if !is_refresh {
-            // New diff — clear all refresh status
-            self.diff_loaded_time = None;
-            self.initial_file_count = 0;
-            self.diff_refreshed_time = None;
-            self.refresh_delta_text.clear();
-            self.baseline_file_paths.clear();
-            self.baseline_file_hashes.clear();
-        }
-
         let (tx, rx) = mpsc::channel();
         let completed = Arc::new(AtomicUsize::new(0));
         let completed_clone = completed.clone();
@@ -586,6 +572,13 @@ impl App {
             Action::Quit => {
                 self.reviewed.clear();
                 self.diff_scope = None;
+                self.last_diff_mode = None;
+                self.diff_loaded_time = None;
+                self.initial_file_count = 0;
+                self.diff_refreshed_time = None;
+                self.refresh_delta_text.clear();
+                self.baseline_file_paths.clear();
+                self.baseline_file_hashes.clear();
                 if self.launched_with_args {
                     return true;
                 }
