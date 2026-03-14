@@ -73,7 +73,7 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
 
     // Fill remaining space
     let used: usize = spans.iter().map(|s| s.content.len()).sum();
-    let hints = " / find  ^r refresh  r reviewed  ? help  q quit";
+    let hints = " ^f find  ^r refresh  r reviewed  ? help  q quit";
     let remaining = (area.width as usize).saturating_sub(used + hints.len());
     spans.push(Span::styled(" ".repeat(remaining), style));
     spans.push(Span::styled(hints, key_style));

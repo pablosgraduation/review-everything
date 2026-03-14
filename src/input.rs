@@ -141,6 +141,11 @@ impl InputState {
             {
                 Action::StartDiffFind
             }
+            (KeyCode::Char('f'), KeyModifiers::CONTROL)
+                if view == ViewContext::Diff =>
+            {
+                Action::StartDiffFind
+            }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) if view == ViewContext::Diff => {
                 Action::RefreshDiff
             }

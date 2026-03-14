@@ -205,7 +205,7 @@ fn draw_help(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("Search & Actions", header_style)),
         Line::from(vec![
-            Span::styled("/                ", key_style),
+            Span::styled("/ / Ctrl+f       ", key_style),
             Span::styled("Find in diff", desc_style),
         ]),
         Line::from(vec![
