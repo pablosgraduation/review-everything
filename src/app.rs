@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
@@ -154,9 +154,9 @@ pub struct App {
     pub last_diff_mode: Option<DiffMode>,
 
     // Refresh status (displayed at bottom of file tree)
-    pub diff_loaded_at: Option<Instant>,
+    pub diff_loaded_time: Option<String>,
     pub initial_file_count: usize,
-    pub diff_refreshed_at: Option<Instant>,
+    pub diff_refreshed_time: Option<String>,
     pub refresh_delta_text: String,
     pub baseline_file_paths: HashSet<PathBuf>,
     pub baseline_file_hashes: HashMap<PathBuf, u64>,
@@ -199,9 +199,9 @@ impl App {
             review_store: git::git_root().ok().and_then(|r| review::ReviewStore::open(&r)),
             diff_scope: None,
             last_diff_mode: None,
-            diff_loaded_at: None,
+            diff_loaded_time: None,
             initial_file_count: 0,
-            diff_refreshed_at: None,
+            diff_refreshed_time: None,
             refresh_delta_text: String::new(),
             baseline_file_paths: HashSet::new(),
             baseline_file_hashes: HashMap::new(),
@@ -232,12 +232,12 @@ impl App {
 
     /// Apply a completed diff result to the app state.
     fn apply_diff_result(&mut self, payload: DiffPayload) {
-        let is_refresh = self.diff_loaded_at.is_some();
+        let is_refresh = self.diff_loaded_time.is_some();
 
         if is_refresh {
             // Compute delta before replacing files
             self.refresh_delta_text = self.compute_refresh_delta(&payload.files);
-            self.diff_refreshed_at = Some(Instant::now());
+            self.diff_refreshed_time = Some(Self::fmt_now());
         }
 
         self.files = payload.files;
@@ -256,9 +256,9 @@ impl App {
         };
 
         if !is_refresh {
-            self.diff_loaded_at = Some(Instant::now());
+            self.diff_loaded_time = Some(Self::fmt_now());
             self.initial_file_count = self.files.len();
-            self.diff_refreshed_at = None;
+            self.diff_refreshed_time = None;
             self.refresh_delta_text.clear();
         }
 
@@ -303,16 +303,24 @@ impl App {
         parts.join(" \u{00b7} ")
     }
 
-    /// Format an Instant as a relative time string (e.g. "2s ago", "3m ago").
-    pub fn fmt_elapsed(instant: &Instant) -> String {
-        let secs = instant.elapsed().as_secs();
-        if secs < 60 {
-            format!("{secs}s ago")
-        } else if secs < 3600 {
-            format!("{}m ago", secs / 60)
-        } else {
-            format!("{}h ago", secs / 3600)
-        }
+    /// Format the current local time as HH:MM:SS.
+    fn fmt_now() -> String {
+        let now: std::time::SystemTime = std::time::SystemTime::now();
+        let secs = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Apply local UTC offset (use libc localtime)
+        let local_secs = {
+            let t = secs as libc::time_t;
+            let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+            unsafe { libc::localtime_r(&t, &mut tm) };
+            ((tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec) as u64) % 86400
+        };
+        let h = local_secs / 3600;
+        let m = (local_secs % 3600) / 60;
+        let s = local_secs % 60;
+        format!("{h:02}:{m:02}:{s:02}")
     }
 
     /// Cancel a loading operation and return to the previous view.

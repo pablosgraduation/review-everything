@@ -114,11 +114,11 @@ fn render_tree(f: &mut Frame, area: Rect, app: &App) {
             total_deletions,
             file_count: app.files.len(),
             reviewed_count: app.reviewed.len(),
-            loaded_status: app.diff_loaded_at.as_ref().map(|t| {
-                format!("loaded {} \u{00b7} {} files", crate::app::App::fmt_elapsed(t), app.initial_file_count)
+            loaded_status: app.diff_loaded_time.as_ref().map(|t| {
+                format!("loaded {t} \u{00b7} {} files", app.initial_file_count)
             }).unwrap_or_default(),
-            refreshed_status: app.diff_refreshed_at.as_ref().map(|t| {
-                format!("updated {} \u{00b7} {}", crate::app::App::fmt_elapsed(t), app.refresh_delta_text)
+            refreshed_status: app.diff_refreshed_time.as_ref().map(|t| {
+                format!("updated {t} \u{00b7} {}", app.refresh_delta_text)
             }).unwrap_or_default(),
         },
     );
