@@ -15,8 +15,18 @@ pub fn render_find_bar(f: &mut Frame, area: Rect, app: &App) {
     let inactive_toggle = Style::default().bg(bg).fg(Color::Rgb(80, 80, 90));
     let fill_style = Style::default().bg(bg);
 
-    // Build right side first (fixed-width: toggles + hints)
+    // Build right side first (fixed-width: match counter + toggles + hints)
     let mut right: Vec<Span> = Vec::new();
+
+    if !app.diff_find_query.is_empty() {
+        let total = app.diff_find_matches.len();
+        if total == 0 {
+            right.push(Span::styled("no matches ", dim));
+        } else {
+            let current = (app.diff_find_current.min(total - 1)) + 1;
+            right.push(Span::styled(format!("{current}/{total} "), dim));
+        }
+    }
 
     let old_style = if app.diff_find_search_old { active_toggle } else { inactive_toggle };
     right.push(Span::styled(" Old", old_style));
@@ -29,22 +39,11 @@ pub fn render_find_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let right_width: usize = right.iter().map(|s| s.content.len()).sum();
 
-    // Build left side: query input + match counter
+    // Build left side: query input
     let mut left: Vec<Span> = Vec::new();
     left.push(Span::styled(" / ", dim));
     left.push(Span::styled(&app.diff_find_query, text_style));
     left.push(Span::styled("_", Style::default().bg(bg).fg(Color::Rgb(80, 80, 180))));
-
-    if !app.diff_find_query.is_empty() {
-        left.push(Span::styled("  ", dim));
-        let total = app.diff_find_matches.len();
-        if total == 0 {
-            left.push(Span::styled("no matches", dim));
-        } else {
-            let current = (app.diff_find_current.min(total - 1)) + 1;
-            left.push(Span::styled(format!("{current}/{total}"), dim));
-        }
-    }
 
     let left_width: usize = left.iter().map(|s| s.content.len()).sum();
 
