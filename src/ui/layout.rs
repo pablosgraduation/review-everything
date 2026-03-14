@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, BorderType};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::ui::{diff_pane, highlights, scrollbar, status_bar, tree_pane};
+use crate::ui::{diff_pane, highlights, scrollbar, status_bar, tree_pane, diff_find_bar};
 
 pub fn draw_diff_layout(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -16,14 +16,26 @@ pub fn draw_diff_layout(f: &mut Frame, app: &App) {
         return;
     }
 
-    // Main layout: content + status bar
-    let main_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(area);
+    // Main layout: find bar (optional) + content + status bar
+    let has_find_bar = app.diff_find_active;
+    let main_layout = if has_find_bar {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(area)
+    };
 
-    let content_area = main_layout[0];
-    let status_area = main_layout[1];
+    let (content_area, status_area) = if has_find_bar {
+        diff_find_bar::render_find_bar(f, main_layout[0], app);
+        (main_layout[1], main_layout[2])
+    } else {
+        (main_layout[0], main_layout[1])
+    };
 
     // Content: tree | left diff | right diff
     if app.show_tree {
@@ -114,12 +126,20 @@ fn render_diff_panes(f: &mut Frame, left_area: Rect, right_area: Rect, app: &App
         let scroll = app.nav.scroll();
         let h_scroll = app.nav.h_scroll();
 
+        // Collect search highlights for each side
+        let find_hl = if app.diff_find_active && !app.diff_find_matches.is_empty() {
+            Some((app.diff_find_matches.as_slice(), app.diff_find_current))
+        } else {
+            None
+        };
+
         diff_pane::render_diff_side(
             f.buffer_mut(),
             left_area,
             file,
             &diff_pane::DiffSideParams {
                 is_left: true, scroll, h_scroll, line_num_width: line_num_w, cursor_row: cursor,
+                find_highlights: find_hl,
             },
         );
 
@@ -138,6 +158,7 @@ fn render_diff_panes(f: &mut Frame, left_area: Rect, right_area: Rect, app: &App
             file,
             &diff_pane::DiffSideParams {
                 is_left: false, scroll, h_scroll, line_num_width: line_num_w, cursor_row: cursor,
+                find_highlights: find_hl,
             },
         );
 

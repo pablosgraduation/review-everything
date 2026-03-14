@@ -4,16 +4,19 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 
+use crate::app::DiffFindMatch;
 use crate::types::{DisplayFile, HighlightRegion, FULL_LINE};
 use crate::ui::highlights;
 
 /// Parameters for rendering one side of the diff.
-pub struct DiffSideParams {
+pub struct DiffSideParams<'a> {
     pub is_left: bool,
     pub scroll: usize,
     pub h_scroll: usize,
     pub line_num_width: u16,
     pub cursor_row: usize,
+    /// If active, (all matches, current match index).
+    pub find_highlights: Option<(&'a [DiffFindMatch], usize)>,
 }
 
 /// Renders one side of the diff (left or right pane).
@@ -21,9 +24,9 @@ pub fn render_diff_side(
     buf: &mut Buffer,
     area: Rect,
     file: &DisplayFile,
-    params: &DiffSideParams,
+    params: &DiffSideParams<'_>,
 ) {
-    let DiffSideParams { is_left, scroll, h_scroll, line_num_width, cursor_row } = *params;
+    let DiffSideParams { is_left, scroll, h_scroll, line_num_width, cursor_row, .. } = *params;
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -94,7 +97,20 @@ pub fn render_diff_side(
         } else {
             let other_side = if is_left { &row.right } else { &row.left };
             let paired_has_changes = !other_side.highlights.is_empty() || other_side.is_filler;
-            render_content_line(buf, content_area, side, is_left, h_scroll, is_cursor_line, paired_has_changes);
+
+            // Collect find matches for this row+side
+            let row_find_matches: Vec<(usize, usize, bool)> = if let Some((matches, current_idx)) = params.find_highlights {
+                matches
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| m.row == row_idx && m.is_left == is_left)
+                    .map(|(i, m)| (m.col, m.len, i == current_idx))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            render_content_line(buf, content_area, side, is_left, h_scroll, is_cursor_line, paired_has_changes, &row_find_matches);
         }
     }
 }
@@ -177,6 +193,7 @@ fn render_content_line(
     h_scroll: usize,
     is_cursor_line: bool,
     paired_has_changes: bool,
+    find_matches: &[(usize, usize, bool)], // (col, len, is_current)
 ) {
     let content = &side.content;
     let has_changes = !side.highlights.is_empty();
@@ -272,6 +289,27 @@ fn render_content_line(
         let col = area.x + x as u16;
         if col < area.x + area.width {
             buf[(col, area.y)].set_char(ch).set_style(cell_style);
+        }
+    }
+
+    // Apply find-in-diff highlights on top
+    for &(match_col, match_len, is_current) in find_matches {
+        let hl_style = if is_current {
+            highlights::find_current_style()
+        } else {
+            highlights::find_match_style()
+        };
+        for offset in 0..match_len {
+            let char_idx = match_col + offset;
+            if char_idx < visible_start {
+                continue;
+            }
+            let screen_x = char_idx - visible_start;
+            let col = area.x + screen_x as u16;
+            if col < area.x + area.width {
+                let existing = buf[(col, area.y)].symbol().chars().next().unwrap_or(' ');
+                buf[(col, area.y)].set_char(existing).set_style(hl_style);
+            }
         }
     }
 }

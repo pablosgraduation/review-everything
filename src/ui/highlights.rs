@@ -129,6 +129,21 @@ pub fn cursor_marker_style() -> Style {
         .fg(Color::Rgb(80, 80, 180))
 }
 
+/// Find match highlight style (yellow background).
+pub fn find_match_style() -> Style {
+    Style::default()
+        .bg(Color::Rgb(120, 100, 20))
+        .fg(Color::Black)
+}
+
+/// Current find match highlight style (bright orange background).
+pub fn find_current_style() -> Style {
+    Style::default()
+        .bg(Color::Rgb(220, 160, 40))
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD)
+}
+
 /// Scrollbar track color.
 pub fn scrollbar_track() -> Color {
     Color::Rgb(40, 40, 40)

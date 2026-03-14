@@ -67,6 +67,16 @@ pub enum LogItem {
     Commit(LogEntry),
 }
 
+/// A match found by the in-diff search.
+#[derive(Debug, Clone)]
+pub struct DiffFindMatch {
+    pub row: usize,
+    pub col: usize,
+    pub len: usize,
+    /// true = left (old) side, false = right (new) side
+    pub is_left: bool,
+}
+
 /// Message sent from the background diff thread.
 pub enum DiffMessage {
     Done(DiffPayload),
@@ -121,6 +131,14 @@ pub struct App {
     /// Scroll offset within the filtered list.
     pub search_scroll: usize,
 
+    // Diff find state
+    pub diff_find_active: bool,
+    pub diff_find_query: String,
+    pub diff_find_search_old: bool,
+    pub diff_find_search_new: bool,
+    pub diff_find_matches: Vec<DiffFindMatch>,
+    pub diff_find_current: usize,
+
     // Input
     pub input_state: InputState,
 
@@ -131,6 +149,9 @@ pub struct App {
     pub reviewed: HashSet<usize>,
     pub review_store: Option<review::ReviewStore>,
     pub diff_scope: Option<String>,
+
+    // For diff refresh
+    pub last_diff_mode: Option<DiffMode>,
 }
 
 impl App {
@@ -158,11 +179,18 @@ impl App {
             search_filtered: Vec::new(),
             search_cursor: 0,
             search_scroll: 0,
+            diff_find_active: false,
+            diff_find_query: String::new(),
+            diff_find_search_old: false,
+            diff_find_search_new: true,
+            diff_find_matches: Vec::new(),
+            diff_find_current: 0,
             input_state: InputState::default(),
             loading_state: None,
             reviewed: HashSet::new(),
             review_store: git::git_root().ok().and_then(|r| review::ReviewStore::open(&r)),
             diff_scope: None,
+            last_diff_mode: None,
         }
     }
 
@@ -172,6 +200,7 @@ impl App {
         let completed = Arc::new(AtomicUsize::new(0));
         let completed_clone = completed.clone();
 
+        self.last_diff_mode = Some(mode.clone());
         self.diff_scope = Some(mode.scope_key());
         self.diff_context = context.clone();
         let loading_msg = context.unwrap_or_else(|| "Computing diff...".to_string());
@@ -295,6 +324,12 @@ impl App {
             }
 
             if let Event::Key(key) = event::read()? {
+                // Diff find mode intercepts all key events
+                if self.diff_find_active {
+                    self.handle_diff_find_key(key);
+                    continue;
+                }
+
                 // Search mode intercepts all key events
                 if self.search_active {
                     self.handle_search_key(key);
@@ -566,12 +601,16 @@ impl App {
                 if self.nav.next_file(self.files.len()) {
                     self.nav.auto_scroll_to_first_hunk(&self.files);
                     self.diff_cursor = self.nav.scroll();
+                    self.diff_find_matches.clear();
+                    self.diff_find_current = 0;
                 }
             }
             Action::PrevFile => {
                 if self.nav.prev_file() {
                     self.nav.auto_scroll_to_first_hunk(&self.files);
                     self.diff_cursor = self.nav.scroll();
+                    self.diff_find_matches.clear();
+                    self.diff_find_current = 0;
                 }
             }
             Action::ToggleTreeFocus => {
@@ -641,6 +680,18 @@ impl App {
                 self.reviewed.clear();
                 if let Some(store) = &self.review_store {
                     store.clear_all();
+                }
+            }
+            Action::StartDiffFind => {
+                self.diff_find_active = true;
+                self.diff_find_query.clear();
+                self.diff_find_current = 0;
+                self.diff_find_matches.clear();
+            }
+            Action::RefreshDiff => {
+                if let Some(mode) = self.last_diff_mode.clone() {
+                    let context = self.diff_context.clone();
+                    self.start_diff_loading(mode, context);
                 }
             }
             Action::ShowHelp => {
@@ -1103,6 +1154,147 @@ impl App {
         self.handle_action(Action::Select).ok();
     }
 
+    fn handle_diff_find_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                self.diff_find_active = false;
+                self.diff_find_query.clear();
+                self.diff_find_matches.clear();
+                self.diff_find_current = 0;
+            }
+            (KeyCode::Enter, KeyModifiers::SHIFT) => {
+                self.prev_diff_find_match();
+            }
+            (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Down, KeyModifiers::NONE) => {
+                self.next_diff_find_match();
+            }
+            (KeyCode::Up, KeyModifiers::NONE) => {
+                self.prev_diff_find_match();
+            }
+            (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
+                // Toggle old side search
+                if self.diff_find_search_old && !self.diff_find_search_new {
+                    return; // must keep at least one side
+                }
+                self.diff_find_search_old = !self.diff_find_search_old;
+                self.diff_find_current = 0;
+                self.update_diff_find_matches();
+                self.jump_to_nearest_diff_find();
+            }
+            (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                // Toggle new side search
+                if self.diff_find_search_new && !self.diff_find_search_old {
+                    return; // must keep at least one side
+                }
+                self.diff_find_search_new = !self.diff_find_search_new;
+                self.diff_find_current = 0;
+                self.update_diff_find_matches();
+                self.jump_to_nearest_diff_find();
+            }
+            (KeyCode::Backspace, _) => {
+                self.diff_find_query.pop();
+                self.diff_find_current = 0;
+                self.update_diff_find_matches();
+                self.jump_to_nearest_diff_find();
+            }
+            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                self.diff_find_query.push(c);
+                self.diff_find_current = 0;
+                self.update_diff_find_matches();
+                self.jump_to_nearest_diff_find();
+            }
+            _ => {}
+        }
+    }
+
+    fn update_diff_find_matches(&mut self) {
+        self.diff_find_matches.clear();
+        let query = self.diff_find_query.to_lowercase();
+        if query.is_empty() {
+            return;
+        }
+
+        let file = match self.files.get(self.nav.current_file) {
+            Some(f) => f,
+            None => return,
+        };
+
+        let query_chars: Vec<char> = query.chars().collect();
+        let qlen = query_chars.len();
+
+        for (row_idx, row) in file.rows.iter().enumerate() {
+            if self.diff_find_search_old && !row.left.is_filler {
+                let chars: Vec<char> = row.left.content.to_lowercase().chars().collect();
+                if chars.len() >= qlen {
+                    for i in 0..=chars.len() - qlen {
+                        if chars[i..i + qlen] == query_chars[..] {
+                            self.diff_find_matches.push(DiffFindMatch {
+                                row: row_idx,
+                                col: i,
+                                len: qlen,
+                                is_left: true,
+                            });
+                        }
+                    }
+                }
+            }
+            if self.diff_find_search_new && !row.right.is_filler {
+                let chars: Vec<char> = row.right.content.to_lowercase().chars().collect();
+                if chars.len() >= qlen {
+                    for i in 0..=chars.len() - qlen {
+                        if chars[i..i + qlen] == query_chars[..] {
+                            self.diff_find_matches.push(DiffFindMatch {
+                                row: row_idx,
+                                col: i,
+                                len: qlen,
+                                is_left: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_diff_find_match(&mut self) {
+        if self.diff_find_matches.is_empty() {
+            return;
+        }
+        self.diff_find_current = (self.diff_find_current + 1) % self.diff_find_matches.len();
+        let row = self.diff_find_matches[self.diff_find_current].row;
+        self.diff_cursor = row;
+        self.ensure_diff_cursor_visible(30);
+    }
+
+    fn prev_diff_find_match(&mut self) {
+        if self.diff_find_matches.is_empty() {
+            return;
+        }
+        self.diff_find_current = (self.diff_find_current + self.diff_find_matches.len() - 1)
+            % self.diff_find_matches.len();
+        let row = self.diff_find_matches[self.diff_find_current].row;
+        self.diff_cursor = row;
+        self.ensure_diff_cursor_visible(30);
+    }
+
+    fn jump_to_nearest_diff_find(&mut self) {
+        if self.diff_find_matches.is_empty() {
+            self.diff_find_current = 0;
+            return;
+        }
+        let cursor = self.diff_cursor;
+        let idx = self
+            .diff_find_matches
+            .iter()
+            .position(|m| m.row >= cursor)
+            .unwrap_or(0);
+        self.diff_find_current = idx;
+        self.diff_cursor = self.diff_find_matches[idx].row;
+        self.ensure_diff_cursor_visible(30);
+    }
+
     fn set_compare_cursor(&mut self, new_cursor: usize) {
         match &mut self.view {
             View::Compare(CompareState::PickNew {
@@ -1222,6 +1414,7 @@ fn resolve_compare_mode(old_rev: &str, new_rev: &str) -> DiffMode {
 }
 
 /// The type of diff to perform.
+#[derive(Clone)]
 pub enum DiffMode {
     Range(String),
     Unstaged,

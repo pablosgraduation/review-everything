@@ -26,6 +26,8 @@ pub enum Action {
     ToggleCollapse,
     StartCompare,
     StartSearch,
+    StartDiffFind,
+    RefreshDiff,
     ToggleReviewed,
     ClearAllReviews,
     ShowHelp,
@@ -103,6 +105,12 @@ impl InputState {
             (KeyCode::Right, KeyModifiers::SHIFT) => Action::ScrollRight(5),
             (KeyCode::Left, KeyModifiers::CONTROL) => Action::ScrollToLineStart,
             (KeyCode::Right, KeyModifiers::CONTROL) => Action::ScrollToLineEnd,
+            (KeyCode::Char('0'), KeyModifiers::NONE) if view == ViewContext::Diff => {
+                Action::ScrollToLineStart
+            }
+            (KeyCode::Char('$'), _) if view == ViewContext::Diff => {
+                Action::ScrollToLineEnd
+            }
 
             // Navigation
             (KeyCode::Tab, KeyModifiers::NONE)
@@ -121,6 +129,20 @@ impl InputState {
             }
             (KeyCode::Char('c'), KeyModifiers::NONE) if view == ViewContext::Log => {
                 Action::StartCompare
+            }
+            (KeyCode::Char('n'), KeyModifiers::NONE) if view == ViewContext::Diff => {
+                Action::NextHunk
+            }
+            (KeyCode::Char('N'), KeyModifiers::SHIFT) if view == ViewContext::Diff => {
+                Action::PrevHunk
+            }
+            (KeyCode::Char('/'), KeyModifiers::NONE)
+                if view == ViewContext::Diff =>
+            {
+                Action::StartDiffFind
+            }
+            (KeyCode::Char('r'), KeyModifiers::CONTROL) if view == ViewContext::Diff => {
+                Action::RefreshDiff
             }
             (KeyCode::Char('/'), KeyModifiers::NONE)
                 if view == ViewContext::Log || view == ViewContext::Compare =>

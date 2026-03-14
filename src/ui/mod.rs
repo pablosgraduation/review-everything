@@ -1,6 +1,7 @@
 //! Top-level draw dispatch and shared UI views (loading, error, help).
 
 pub mod compare;
+pub mod diff_find_bar;
 pub mod diff_pane;
 pub mod highlights;
 pub mod layout;
@@ -170,53 +171,61 @@ fn draw_help(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("Diff Navigation", header_style)),
         Line::from(vec![
-            Span::styled("Ctrl+S+Down ", key_style),
+            Span::styled("n / Ctrl+S+Down  ", key_style),
             Span::styled("Next hunk", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("Ctrl+S+Up   ", key_style),
+            Span::styled("N / Ctrl+S+Up    ", key_style),
             Span::styled("Previous hunk", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("]f          ", key_style),
+            Span::styled("]f               ", key_style),
             Span::styled("Next file", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("[f          ", key_style),
+            Span::styled("[f               ", key_style),
             Span::styled("Previous file", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("Tab         ", key_style),
+            Span::styled("0 / $            ", key_style),
+            Span::styled("Line start / end", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Tab              ", key_style),
             Span::styled("Toggle tree/diff focus", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("t           ", key_style),
+            Span::styled("t                ", key_style),
             Span::styled("Toggle file tree", desc_style),
         ]),
         Line::from(""),
-        Line::from(Span::styled("General", header_style)),
+        Line::from(Span::styled("Search & Actions", header_style)),
         Line::from(vec![
-            Span::styled("r           ", key_style),
+            Span::styled("/                ", key_style),
+            Span::styled("Find in diff", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+r           ", key_style),
+            Span::styled("Refresh diff", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("r                ", key_style),
             Span::styled("Toggle file reviewed", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("Enter       ", key_style),
+            Span::styled("Enter            ", key_style),
             Span::styled("Select / view diff", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("c           ", key_style),
+            Span::styled("c                ", key_style),
             Span::styled("Compare two endpoints (from log)", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("/           ", key_style),
-            Span::styled("Search (log/compare)", desc_style),
-        ]),
-        Line::from(vec![
-            Span::styled("q/Esc       ", key_style),
+            Span::styled("q/Esc            ", key_style),
             Span::styled("Quit / back", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("?           ", key_style),
+            Span::styled("?                ", key_style),
             Span::styled("Toggle this help", desc_style),
         ]),
     ];
